@@ -1,5 +1,7 @@
 #include <iostream>
 #include <vector>
+#include <limits>
+#include <fcntl.h>
 using namespace std;
 
 bool isValidStrategy(const string &strategy)
@@ -32,7 +34,7 @@ bool isValidStrategy(const string &strategy)
     return true;
 }
 
-void printBoard(const vector<vector<int> > &board)
+void printBoard(const vector<vector<int>> &board)
 {
     for (int i = 0; i < 3; i++)
     {
@@ -59,7 +61,7 @@ void printBoard(const vector<vector<int> > &board)
     cout << endl;
 }
 
-int checkWinner(const vector<vector<int> > &board)
+int checkWinner(const vector<vector<int>> &board)
 {
     // Check rows
     for (int i = 0; i < 3; i++)
@@ -93,7 +95,8 @@ int checkWinner(const vector<vector<int> > &board)
     return 0;
 }
 
-void LunarDeportasion(){
+void LunarDeportasion()
+{
     cout << "Lunar Deportasion" << endl;
     cout << "Sending humans to the moon..." << endl;
 }
@@ -117,7 +120,7 @@ int main(int argc, char *argv[])
     // 0 - empty cell
     // 1 - AI
     // 2 - player
-    vector<vector<int> > board(3, vector<int>(3, 0));
+    vector<vector<int>> board(3, vector<int>(3, 0));
 
     // Print the initial board
     printBoard(board);
@@ -135,7 +138,9 @@ int main(int argc, char *argv[])
             {
                 board[(cell - 1) / 3][(cell - 1) % 3] = 1;
                 ai++;
-            }else{
+            }
+            else
+            {
                 for (int j = ai; j < 9; j++)
                 {
                     if (board[(strategy[j] - '0' - 1) / 3][(strategy[j] - '0' - 1) % 3] == 0)
@@ -168,13 +173,13 @@ int main(int argc, char *argv[])
             cout << "Player's turn" << endl;
             cout << "Enter the cell number: ";
             int cell;
-            cin >> cell;
-            while (cell < 1 || cell > 9 || board[(cell - 1) / 3][(cell - 1) % 3] != 0)
+            while (!(cin >> cell) || cell < 1 || cell > 9 || board[(cell - 1) / 3][(cell - 1) % 3] != 0)
             {
-                cout << "Invalid cell number. Enter a valid cell number: ";
-                cin >> cell;
+                cout << "Invalid cell number. Enter a valid cell number: " << endl;
+                cin.clear();
+                cin.ignore(numeric_limits<streamsize>::max(), '\n');
             }
-            board[(cell - 1)/ 3][(cell - 1) % 3] = 2;
+            board[(cell - 1) / 3][(cell - 1) % 3] = 2;
             printBoard(board);
             if (i >= 4)
             {
@@ -193,9 +198,8 @@ int main(int argc, char *argv[])
             }
         }
     }
-    // No winner 
+    // No winner
     cout << "It's a draw" << endl;
-
 
     return 0;
 }
