@@ -22,6 +22,9 @@ void executeProgram(string &program, string &args)
     }
     else if (pid == 0)
     {
+        dup2(STDIN_FILENO,STDIN_FILENO);
+        dup2(STDOUT_FILENO,STDOUT_FILENO);
+
         // Execute the program
         execvp(execArgs[0],execArgs.data());
         
