@@ -7,9 +7,61 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <set>
-
+#include <signal.h>
+#include <regex>
+#include <fcntl.h>
 
 using namespace std;
+
+pid_t childpid = -1;
+
+struct OutputInfo
+{
+    string type;
+    string address;
+    int port;
+};
+
+struct InputInfo
+{
+    string type;
+    int port;
+};
+
+void recv_TCPS(int sockfd)
+{
+    while (true)
+    {
+        char buf[10];
+        int bytesReceived = recv(sockfd, buf, sizeof(buf), 0);
+        if (bytesReceived <= 0)
+        {
+            close(sockfd); // Close client socket
+            // kill child process
+            if (kill(childpid, SIGKILL) == -1)
+            {
+                // Error handling
+                std::cerr << "Failed to kill child process" << std::endl;
+                exit(1);
+            }
+            cout << "Client disconnected" << endl;
+            exit(1);
+        }
+        else if (string(buf) == "exit\n")
+        {
+            close(sockfd); // Close client socket
+            // kill child process
+            if (kill(childpid, SIGKILL) == -1)
+            {
+                // Error handling
+                std::cerr << "Failed to kill child process" << std::endl;
+                exit(1);
+            }
+            cout << "Client disconnected" << endl;
+            exit(1);
+        }
+    }
+}
 
 int startTCPS(int port)
 {
@@ -90,59 +142,7 @@ int startTCPC(string address, int port)
     return sockfd;
 }
 
-void proccessArgs(const string &flag, const string &input, int &infd, int &outfd)
-{
-    int port;
-    string address;
-    if (input.find("TCPS") == 0)
-    {
-        port = stoi(input.substr(4));
-    }
-    else if (input.find("TCPC") == 0)
-    {
-        size_t pos;
-        if ((pos = input.find(",")) == string::npos)
-        {
-            cerr << "invalid prameter !!" << endl;
-            exit(1);
-        }
-        address = input.substr(4, pos - 4);
-        string temp = input.substr(pos + 1);
-        if (temp.empty())
-        {
-            cerr << "invalid prameter !!" << endl;
-            exit(1);
-        }
-        port = stoi(temp);
-    }
-    else
-    {
-        cerr << "invalid prameter !!" << endl;
-        exit(1);
-    }
-
-    if (flag == "-i" && address.empty())
-    {
-        // start server
-        infd = startTCPS(port);
-    }
-    else if (flag == "-o" && !address.empty())
-    {
-        // start client
-        outfd = startTCPC(address, port);
-    }
-    else if (flag == "-b" && address.empty())
-    {
-        infd = startTCPS(port);
-    }
-    else
-    {
-        cerr << "invalid prameter !!" << endl;
-        exit(1);
-    }
-}
-
-void executeProgram(string &program, string &args, int infd, int outfd, bool both)
+void executeProgram(string &program, string &args, string type, int infd, int outfd, bool both)
 {
     vector<char *> execArgs;
     execArgs.push_back(&program[0]);
@@ -166,62 +166,121 @@ void executeProgram(string &program, string &args, int infd, int outfd, bool bot
                 dup2(infd, STDOUT_FILENO);
             }
         }
-        close(infd);
         // redirect stdout of child process to outfd
         if (outfd != -1)
         {
             dup2(outfd, STDOUT_FILENO);
         }
-        close(outfd);
 
         // Execute the program
         execvp(execArgs[0], execArgs.data());
+
+        close(infd);
+        close(outfd);
 
         std::cerr << "Error executing " << program << std::endl;
         exit(EXIT_FAILURE);
     }
     else
     {
-        // check if client disconnected
-        if (infd != -1)
-        {
-            while (true)
-            {
-                cout << "im here" << endl;
-                char buf[10];
-                int bytesReceived = recv(infd, buf, sizeof(buf), 0);
-                if (bytesReceived <= 0)
-                {
-                    close(infd); // Close client socket
-                    // kill child process
-                    if (kill(pid, SIGKILL) == -1)
-                    {
-                        // Error handling
-                        std::cerr << "Failed to kill child process" << std::endl;
-                        exit(1);
-                    }
-                    cout << "Client disconnected" << endl;
-                    exit(1);
-                }
-                else if (string(buf) == "exit\n")
-                {
-                    close(infd); // Close client socket
-                    // kill child process
-                    if (kill(pid, SIGKILL) == -1)
-                    {
-                        // Error handling
-                        std::cerr << "Failed to kill child process" << std::endl;
-                        exit(1);
-                    }
-                    cout << "Client disconnected" << endl;
-                    exit(1);
-                }
-            }
-        }
+        childpid = pid;
+    }
+}
 
-        // wait
-        int status;
-        waitpid(pid, &status, 0);
+bool validate_input(string &input)
+{
+    regex tcp_udp_regex("^(TCPS)\\d+$");
+    return regex_match(input, tcp_udp_regex);
+}
+
+bool validate_output(string &output)
+{
+    regex tcp_udp_regex("^(TCPC)[^,]+,\\d+$");
+    return regex_match(output, tcp_udp_regex);
+}
+
+OutputInfo extract_output_info(const std::string& output) {
+    OutputInfo info;
+
+    regex pattern("^(TCPC)([^,]+),([0-9]+)$");
+
+    smatch match;
+    if (regex_match(output, match, pattern)) {
+        info.type = match[1].str();
+        
+        info.address = match[2].str();
+        
+        info.port = stoi(match[3].str());
+        
+    }
+
+    return info;
+}
+
+InputInfo extract_input_info(const std::string& input) {
+    InputInfo info;
+
+    regex pattern("^(TCPS)([0-9]+)$");
+
+    smatch match;
+    if (regex_match(input, match, pattern)) {
+        info.type = match[1].str();
+        
+        info.port = stoi(match[2].str());
+    }
+
+    return info;
+}
+
+void proccessArgs(int argc, char *argv[], int &opt, string &input, string &output, string &both, bool &input_flag, bool &output_flag, bool &both_flag)
+{
+    while ((opt = getopt(argc, argv, "i:o:b:e")) != -1)
+    {
+        switch (opt)
+        {
+        case 'i':
+            input = optarg;
+            input_flag = true;
+            if (!validate_input(input))
+            {
+                cerr << "invalid -i argument" << endl;
+                exit(1);
+            }
+            break;
+
+        case 'o':
+            output = optarg;
+            output_flag = true;
+            if (!validate_output(output))
+            {
+                cerr << "invalid -o argument" << endl;
+                exit(1);
+            }
+            break;
+
+        case 'b':
+            both = optarg;
+            both_flag = true;
+            if (!validate_input(both))
+            {
+                cerr << "invalid -b argument" << endl;
+                exit(1);
+            }
+            break;
+
+        case 'e':
+            break;
+
+        default:
+            cerr << "Usage: " << argv[0] << "[-i TCPS<port>|UDPS<port>] [-o TCPC<adress,port>|UDPC<adress,port>] [-b TCPS<port>|UDPS<port>] [-t <timeout>]";
+            break;
+        }
+    }
+
+    if ((input_flag || output_flag) && both_flag)
+    {
+        cerr << "-b cannot be used with -i or -o" << endl;
+        exit(1);
     }
 }
 
@@ -236,40 +295,41 @@ int main(int argc, char *argv[])
     string temp = argv[2];
     string program = "./" + temp;
     string args = argv[3];
-    set<string> flags;
-    int infd = -1;
-    int outfd = -1;
 
-    // ./mync -e ./program <arg> -i TCPS1234 -o TCPC127.0.0.1,1234
-    for (int i = 4; i < argc; i++)
+    int opt;
+    string input;
+    string output;
+    string both;
+    bool input_flag = false;
+    bool output_flag = false;
+    bool both_flag = false;
+    OutputInfo output_struct;
+    InputInfo input_struct;
+    proccessArgs(argc, argv, opt, input, output, both, input_flag, output_flag, both_flag);
+
+    if (input_flag || output_flag)
     {
-        if (string(argv[i]).find("-i") == 0 || string(argv[i]).find("-o") == 0 || string(argv[i]).find("-b") == 0)
+        input_struct = extract_input_info(input);
+        output_struct = extract_output_info(output);
+        if (input_struct.type == "TCPS" && output_struct.type == "TCPC")
         {
-            if (i + 1 < argc)
-            {
-                flags.insert(argv[i]);
-                if (flags.size() > 2 || (flags.size() == 2 && flags.find("-d") != flags.end()))
-                {
-                    cerr << "invalid prameter !!";
-                    exit(1);
-                }
-                proccessArgs(argv[i], argv[i + 1], infd, outfd);
-                i++;
-            }
-            else
-            {
-                cerr << "invalid prameter !!";
-                exit(1);
-            }
+            int client_socket = startTCPC(output_struct.address, output_struct.port);
+            int server_socket = startTCPS(input_struct.port);
+            executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
+            recv_TCPS(server_socket);
         }
     }
-
-    bool both = false;
-    if (flags.find("-b") != flags.end())
+    
+    if (both_flag)
     {
-        both = true;
+        input_struct = extract_input_info(both);
+        if (input_struct.type == "TCPS")
+        {
+            int client_socket = startTCPS(input_struct.port);
+            executeProgram(program, args, input_struct.type, client_socket, client_socket, true);
+            recv_TCPS(client_socket);
+        }
     }
-    executeProgram(program, args, infd, outfd, both);
-
+    
     return 0;
 }

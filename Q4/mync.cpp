@@ -9,10 +9,24 @@
 #include <set>
 #include <signal.h>
 #include <regex>
+#include <fcntl.h>
 
 using namespace std;
 
 pid_t childpid = -1;
+
+struct OutputInfo
+{
+    string type;
+    string address;
+    int port;
+};
+
+struct InputInfo
+{
+    string type;
+    int port;
+};
 
 void recv_TCPS(int sockfd)
 {
@@ -145,15 +159,22 @@ void setUpAlarm(int seconds)
 int startUDPS(int port, int timeOut)
 {
     int sockfd;
-    struct sockaddr_in address, addrCli;
-    int addrlen = sizeof(address);
-    socklen_t addrClen = sizeof(addrCli);
+    struct sockaddr_in address;
 
     if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) == 0)
     {
         cerr << "socket failed" << endl;
         exit(EXIT_FAILURE);
     }
+
+    // set socket to reuse address and port
+    int opt = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)) < 0)
+    {
+        cerr << "setsockopt failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
 
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
@@ -171,15 +192,21 @@ int startUDPS(int port, int timeOut)
 void recv_UDPS(int sockfd, int timeOut)
 {
     char buffer[1024];
-    setUpAlarm(timeOut);
-    while (1)
+    if (timeOut != -1)
+    {
+        setUpAlarm(timeOut);
+    }
+    while (true)
     {
         int n = recv(sockfd, buffer, sizeof(buffer), 0);
         if (n < 0)
         {
             break;
         }
-        alarm(timeOut);
+        if (timeOut != -1)
+        {
+            alarm(timeOut);
+        }
     }
 }
 
@@ -191,6 +218,21 @@ int startUDPC(string address, int port)
     if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
     {
         cerr << "socket failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    // set socket to reuse address and port
+    int opt = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)) < 0)
+    {
+        cerr << "setsockopt failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    FILE* socket_stream = fdopen(sockfd, "r+");
+    if (!socket_stream) {
+        perror("fdopen failed");
+        close(sockfd);
         exit(EXIT_FAILURE);
     }
 
@@ -235,16 +277,17 @@ void executeProgram(string &program, string &args, string type, int infd, int ou
                 dup2(infd, STDOUT_FILENO);
             }
         }
-        close(infd);
         // redirect stdout of child process to outfd
         if (outfd != -1)
         {
             dup2(outfd, STDOUT_FILENO);
         }
-        close(outfd);
 
         // Execute the program
         execvp(execArgs[0], execArgs.data());
+
+        close(infd);
+        close(outfd);
 
         std::cerr << "Error executing " << program << std::endl;
         exit(EXIT_FAILURE);
@@ -252,13 +295,6 @@ void executeProgram(string &program, string &args, string type, int infd, int ou
     else
     {
         childpid = pid;
-        if (infd != -1 && type == "TCPS")
-        {
-            recv_TCPS(infd);
-        }
-        else if (infd != -1 && type == "UDPS")
-        {
-        }
     }
 }
 
@@ -274,6 +310,39 @@ bool validate_output(string &output)
     return regex_match(output, tcp_udp_regex);
 }
 
+OutputInfo extract_output_info(const std::string& output) {
+    OutputInfo info;
+
+    regex pattern("^(TCPC|UDPC)([^,]+),([0-9]+)$");
+
+    smatch match;
+    if (regex_match(output, match, pattern)) {
+        info.type = match[1].str();
+        
+        info.address = match[2].str();
+        
+        info.port = stoi(match[3].str());
+        
+    }
+
+    return info;
+}
+
+InputInfo extract_input_info(const std::string& input) {
+    InputInfo info;
+
+    regex pattern("^(TCPS|UDPS)([0-9]+)$");
+
+    smatch match;
+    if (regex_match(input, match, pattern)) {
+        info.type = match[1].str();
+        
+        info.port = stoi(match[2].str());
+    }
+
+    return info;
+}
+
 void proccessArgs(int argc, char *argv[], int &opt, int &timeout, string &input, string &output, string &both, bool &input_flag, bool &output_flag, bool &both_flag)
 {
     while ((opt = getopt(argc, argv, "i:o:b:t:e")) != -1)
@@ -285,7 +354,7 @@ void proccessArgs(int argc, char *argv[], int &opt, int &timeout, string &input,
             input_flag = true;
             if (!validate_input(input))
             {
-                cerr << "invalid input !!!";
+                cerr << "invalid -i argument" << endl;
                 exit(1);
             }
             break;
@@ -295,7 +364,7 @@ void proccessArgs(int argc, char *argv[], int &opt, int &timeout, string &input,
             output_flag = true;
             if (!validate_output(output))
             {
-                cerr << "invalid output !!!";
+                cerr << "invalid -o argument" << endl;
                 exit(1);
             }
             break;
@@ -305,7 +374,7 @@ void proccessArgs(int argc, char *argv[], int &opt, int &timeout, string &input,
             both_flag = true;
             if (!validate_input(both))
             {
-                cerr << "invalid input !!!";
+                cerr << "invalid -b argument" << endl;
                 exit(1);
             }
             break;
@@ -325,14 +394,9 @@ void proccessArgs(int argc, char *argv[], int &opt, int &timeout, string &input,
 
     if ((input_flag || output_flag) && both_flag)
     {
-        cerr << "invalid input !!!";
+        cerr << "-b cannot be used with -i or -o" << endl;
         exit(1);
     }
-
-
-        
-
-
 }
 
 int main(int argc, char *argv[])
@@ -348,15 +412,65 @@ int main(int argc, char *argv[])
     string args = argv[3];
 
     int opt;
-    int timeout;
+    int timeout = -1;
     string input;
     string output;
     string both;
-    bool input_flag;
-    bool output_flag;
-    bool both_flag;
+    bool input_flag = false;
+    bool output_flag = false;
+    bool both_flag = false;
+    OutputInfo output_struct;
+    InputInfo input_struct;
     proccessArgs(argc, argv, opt, timeout, input, output, both, input_flag, output_flag, both_flag);
 
-    cout << input << " " << output << " " << both;
+    if (input_flag || output_flag)
+    {
+        input_struct = extract_input_info(input);
+        output_struct = extract_output_info(output);
+        if (input_struct.type == "TCPS" && output_struct.type == "TCPC")
+        {
+            int client_socket = startTCPC(output_struct.address, output_struct.port);
+            int server_socket = startTCPS(input_struct.port);
+            executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
+            recv_TCPS(server_socket);
+        }
+        else if (input_struct.type == "UDPS" && output_struct.type == "UDPC")
+        {
+            int client_socket = startUDPC(output_struct.address, output_struct.port);
+            int server_socket = startUDPS(input_struct.port, timeout);
+            executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
+            //recv_UDPS(server_socket, timeout);
+        }
+        else if (input_struct.type == "UDPS" && output_struct.type == "TCPC"){
+            int client_socket = startUDPC(output_struct.address, output_struct.port);
+            int server_socket = startUDPS(input_struct.port, timeout);
+            executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
+            //recv_UDPS(server_socket, timeout);
+        }
+        else if (input_struct.type == "TCPS" && output_struct.type == "UDPC"){
+            int client_socket = startUDPC(output_struct.address, output_struct.port);
+            int server_socket = startTCPS(input_struct.port);
+            executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
+            recv_TCPS(server_socket);
+        }
+    }
+    
+    if (both_flag)
+    {
+        input_struct = extract_input_info(both);
+        if (input_struct.type == "TCPS")
+        {
+            int client_socket = startTCPS(input_struct.port);
+            executeProgram(program, args, input_struct.type, client_socket, client_socket, true);
+            recv_TCPS(client_socket);
+        }
+        else if (input_struct.type == "UDPS")
+        {
+            int sockfd = startUDPS(input_struct.port, timeout);
+            executeProgram(program, args, input_struct.type, sockfd, sockfd, true);
+            //recv_UDPS(sockfd, timeout);
+        }
+    }
+    
     return 0;
 }
