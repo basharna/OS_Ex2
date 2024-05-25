@@ -20,12 +20,14 @@ struct OutputInfo
     string type;
     string address;
     int port;
+    string path;
 };
 
 struct InputInfo
 {
     string type;
     int port;
+    string path;
 };
 
 void recv_TCPS(int sockfd)
@@ -300,50 +302,97 @@ void executeProgram(string &program, string &args, string type, int infd, int ou
 
 bool validate_input(string &input)
 {
-    regex tcp_udp_regex("^(TCPS|UDPS)\\d+$");
-    return regex_match(input, tcp_udp_regex);
+    if (input.find("UDSSD") != string::npos || input.find("UDSSS") != string::npos)
+    {
+        regex udss_regex("^(UDSSD|UDSSS)(.+)+$");
+        return regex_match(input, udss_regex);
+    }
+    else
+    {
+        regex tcp_udp_regex("^(TCPS|UDPS)\\d+$");
+        return regex_match(input, tcp_udp_regex);
+    }
 }
 
 bool validate_output(string &output)
 {
-    regex tcp_udp_regex("^(TCPC|UDPC)[^,]+,\\d+$");
-    return regex_match(output, tcp_udp_regex);
+    if (output.find("UDSCD") != string::npos || output.find("UDSCS") != string::npos)
+    {
+        regex udsc_regex("^(UDSCD|UDSCS)(.+)+$");
+        return regex_match(output, udsc_regex);
+    }
+    else
+    {
+        regex tcp_udp_regex("^(TCPC|UDPC)[^,]+,\\d+$");
+        return regex_match(output, tcp_udp_regex);
+    }
 }
 
 OutputInfo extract_output_info(const std::string &output)
 {
     OutputInfo info;
-
-    regex pattern("^(TCPC|UDPC)([^,]+),([0-9]+)$");
-
-    smatch match;
-    if (regex_match(output, match, pattern))
+    if (output.find("UDSCD") != string::npos || output.find("UDSCS") != string::npos)
     {
-        info.type = match[1].str();
 
-        info.address = match[2].str();
+        regex pattern("^(UDSCD|UDSCS)(.+)+$");
 
-        info.port = stoi(match[3].str());
+        smatch match;
+        if (regex_match(output, match, pattern))
+        {
+            info.type = match[1].str();
+            info.path = match[2].str();
+            info.port = -1;
+            info.address = "";
+        }
+        return info;
     }
+    else
+    {
+        regex pattern("^(TCPC|UDPC)([^,]+),([0-9]+)$");
 
-    return info;
+        smatch match;
+        if (regex_match(output, match, pattern))
+        {
+            info.type = match[1].str();
+            info.address = match[2].str();
+            info.port = stoi(match[3].str());
+            info.path = "";
+        }
+
+        return info;
+    }
 }
 
 InputInfo extract_input_info(const std::string &input)
 {
     InputInfo info;
 
-    regex pattern("^(TCPS|UDPS)([0-9]+)$");
-
-    smatch match;
-    if (regex_match(input, match, pattern))
+    if (input.find("UDSSD") != string::npos || input.find("UDSSS") != string::npos)
     {
-        info.type = match[1].str();
+        regex pattern("^(UDSSD|UDSSS)(.+)+$");
 
-        info.port = stoi(match[2].str());
+        smatch match;
+        if (regex_match(input, match, pattern))
+        {
+            info.type = match[1].str();
+            info.path = match[2].str();
+            info.port = -1;
+        }
+        return info;
     }
+    else
+    {
+        regex pattern("^(TCPS|UDPS)([0-9]+)$");
 
-    return info;
+        smatch match;
+        if (regex_match(input, match, pattern))
+        {
+            info.type = match[1].str();
+            info.port = stoi(match[2].str());
+            info.path = "";
+        }
+        return info;
+    }
 }
 
 void proccessArgs(int argc, char *argv[], int &opt, int &timeout, string &input, string &output, string &both, bool &input_flag, bool &output_flag, bool &both_flag)
@@ -461,6 +510,7 @@ int main(int argc, char *argv[])
     }
     else if (input_flag)
     {
+        cout << "input : " << input << endl;
         input_struct = extract_input_info(input);
         int server_socket;
         if (input_struct.type == "TCPS")
@@ -506,6 +556,7 @@ int main(int argc, char *argv[])
             // recv_UDPS(sockfd, timeout);
         }
     }
+
 
     return 0;
 }
