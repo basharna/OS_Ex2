@@ -173,9 +173,16 @@ int main(int argc, char *argv[])
             cout << "Player's turn" << endl;
             cout << "Enter the cell number: ";
             int cell;
-            while (!(cin >> cell) || cell < 1 || cell > 9 || board[(cell - 1) / 3][(cell - 1) % 3] != 0)
+
+            while (!(cin >> cell) || cell < 1 || cell > 9 || board[(cell - 1) / 3][(cell - 1) % 3] != 0 )
             {
-                cout << "Invalid cell number. Enter a valid cell number: " << endl;
+                if (cin.fail())
+                {
+                    cin.clear();
+                    cout << "\n client Disconnected" << endl;
+                    exit(1);
+                }
+                cout << "Invalid cell number. Enter a valid cell number: " << cell << endl;
                 cin.clear();
                 cin.ignore(numeric_limits<streamsize>::max(), '\n');
             }

@@ -10,6 +10,7 @@
 #include <signal.h>
 #include <regex>
 #include <fcntl.h>
+#include <sys/un.h>
 
 using namespace std;
 
@@ -29,41 +30,6 @@ struct InputInfo
     int port;
     string path;
 };
-
-void recv_TCPS(int sockfd)
-{
-    while (true)
-    {
-        char buf[10];
-        int bytesReceived = recv(sockfd, buf, sizeof(buf), 0);
-        if (bytesReceived <= 0)
-        {
-            close(sockfd); // Close client socket
-            // kill child process
-            if (kill(childpid, SIGKILL) == -1)
-            {
-                // Error handling
-                std::cerr << "Failed to kill child process" << std::endl;
-                exit(1);
-            }
-            cout << "Client disconnected" << endl;
-            exit(1);
-        }
-        else if (string(buf) == "exit\n")
-        {
-            close(sockfd); // Close client socket
-            // kill child process
-            if (kill(childpid, SIGKILL) == -1)
-            {
-                // Error handling
-                std::cerr << "Failed to kill child process" << std::endl;
-                exit(1);
-            }
-            cout << "Client disconnected" << endl;
-            exit(1);
-        }
-    }
-}
 
 int startTCPS(int port)
 {
@@ -255,6 +221,145 @@ int startUDPC(string address, int port)
     return sockfd;
 }
 
+int startUDSSD(string path)
+{
+    int sockfd;
+    struct sockaddr_un address;
+
+    if ((sockfd = socket(AF_UNIX, SOCK_DGRAM, 0)) == 0)
+    {
+        cerr << "socket failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    // set socket to reuse address and port
+    int opt = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)) < 0)
+    {
+        cerr << "setsockopt failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    address.sun_family = AF_UNIX;
+    strcpy(address.sun_path, path.c_str());
+    unlink(address.sun_path);
+    if (bind(sockfd, (struct sockaddr *)&address, sizeof(address)) < 0)
+    {
+        cerr << "bind failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    return sockfd;
+}
+
+int startUDSCD(string path)
+{
+    int sockfd;
+    struct sockaddr_un serv_addr;
+
+    if ((sockfd = socket(AF_UNIX, SOCK_DGRAM, 0)) < 0)
+    {
+        cerr << "socket failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    // set socket to reuse address and port
+    int opt = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)) < 0)
+    {
+        cerr << "setsockopt failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    serv_addr.sun_family = AF_UNIX;
+    strcpy(serv_addr.sun_path, path.c_str());
+
+    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+    {
+        cerr << "connect failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    return sockfd;
+}
+
+int startUDSSS(string path)
+{
+    int sockfd;
+    struct sockaddr_un address;
+
+    if ((sockfd = socket(AF_UNIX, SOCK_STREAM, 0)) == 0)
+    {
+        cerr << "socket failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    // set socket to reuse address and port
+    int opt = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)) < 0)
+    {
+        cerr << "setsockopt failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    address.sun_family = AF_UNIX;
+    strcpy(address.sun_path, path.c_str());
+    unlink(address.sun_path);
+    if (bind(sockfd, (struct sockaddr *)&address, sizeof(address)) < 0)
+    {
+        cerr << "bind failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    // listen for incoming connections
+    if (listen(sockfd, 3) < 0)
+    {
+        cerr << "listen failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    int addrlen = sizeof(address);
+    int new_socket;
+    if ((new_socket = accept(sockfd, (struct sockaddr *)&address, (socklen_t *)&addrlen)) < 0)
+    {
+        cerr << "accept failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    return new_socket;
+}
+
+int startUDSCS(string path)
+{
+    int sockfd;
+    struct sockaddr_un serv_addr;
+
+    if ((sockfd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
+    {
+        cerr << "socket failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    // set socket to reuse address and port
+    int opt = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)) < 0)
+    {
+        cerr << "setsockopt failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    serv_addr.sun_family = AF_UNIX;
+    strcpy(serv_addr.sun_path, path.c_str());
+
+    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+    {
+        cerr << "connect failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    return sockfd;
+}
+
 void executeProgram(string &program, string &args, string type, int infd, int outfd, bool both)
 {
     vector<char *> execArgs;
@@ -270,6 +375,7 @@ void executeProgram(string &program, string &args, string type, int infd, int ou
     }
     else if (pid == 0)
     {
+
         // redirect stdin of child process to infd
         if (infd != -1)
         {
@@ -297,6 +403,9 @@ void executeProgram(string &program, string &args, string type, int infd, int ou
     else
     {
         childpid = pid;
+        int status;
+        waitpid(pid, &status, 0);
+        exit(0);
     }
 }
 
@@ -479,52 +588,71 @@ int main(int argc, char *argv[])
     {
         input_struct = extract_input_info(input);
         output_struct = extract_output_info(output);
+        int client_socket = -1;
+        int server_socket = -1;
         if (input_struct.type == "TCPS" && output_struct.type == "TCPC")
         {
-            int client_socket = startTCPC(output_struct.address, output_struct.port);
-            int server_socket = startTCPS(input_struct.port);
-            executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
-            recv_TCPS(server_socket);
+            client_socket = startTCPC(output_struct.address, output_struct.port);
+            server_socket = startTCPS(input_struct.port);
         }
         else if (input_struct.type == "UDPS" && output_struct.type == "UDPC")
         {
-            int client_socket = startUDPC(output_struct.address, output_struct.port);
-            int server_socket = startUDPS(input_struct.port, timeout);
-            executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
-            // recv_UDPS(server_socket, timeout);
+            client_socket = startUDPC(output_struct.address, output_struct.port);
+            server_socket = startUDPS(input_struct.port, timeout);
         }
         else if (input_struct.type == "UDPS" && output_struct.type == "TCPC")
         {
-            int client_socket = startTCPC(output_struct.address, output_struct.port);
-            int server_socket = startUDPS(input_struct.port, timeout);
-            executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
-            // recv_UDPS(server_socket, timeout);
+            client_socket = startTCPC(output_struct.address, output_struct.port);
+            server_socket = startUDPS(input_struct.port, timeout);
         }
         else if (input_struct.type == "TCPS" && output_struct.type == "UDPC")
         {
-            int client_socket = startUDPC(output_struct.address, output_struct.port);
-            int server_socket = startTCPS(input_struct.port);
-            executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
-            recv_TCPS(server_socket);
+            client_socket = startUDPC(output_struct.address, output_struct.port);
+            server_socket = startTCPS(input_struct.port);
         }
+        else if (input_struct.type == "UDSSD" && output_struct.type == "UDSCD")
+        {
+            client_socket = startUDSCD(output_struct.path);
+            server_socket = startUDSSD(input_struct.path);
+        } 
+        else if (input_struct.type == "UDSSD" && output_struct.type == "UDSCS")
+        {
+            client_socket = startUDSCS(output_struct.path);
+            server_socket = startUDSSS(input_struct.path);
+        }
+        else if (input_struct.type == "UDSSS" && output_struct.type == "UDSCD")
+        {
+            client_socket = startUDSCD(output_struct.path);
+            server_socket = startUDSSS(input_struct.path);
+        } 
+        else if (input_struct.type == "UDSSS" && output_struct.type == "UDSCS")
+        {
+            client_socket = startUDSCS(output_struct.path);
+            server_socket = startUDSSS(input_struct.path);
+        }
+        executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
     }
     else if (input_flag)
     {
         cout << "input : " << input << endl;
         input_struct = extract_input_info(input);
-        int server_socket;
+        int server_socket = -1;
         if (input_struct.type == "TCPS")
         {
             server_socket = startTCPS(input_struct.port);
-            executeProgram(program, args, input_struct.type, server_socket, -1, false);
-            recv_TCPS(server_socket);
         }
         else if (input_struct.type == "UDPS")
         {
             server_socket = startUDPS(input_struct.port, timeout);
-            executeProgram(program, args, input_struct.type, server_socket, -1, false);
-            // recv_UDPS(server_socket, timeout);
         }
+        else if (input_struct.type == "UDSSD")
+        {
+            server_socket = startUDSSD(input_struct.path);
+        } else if (input_struct.type == "UDSSS")
+        {
+            server_socket = startUDSSS(input_struct.path);
+        }
+        executeProgram(program, args, input_struct.type, server_socket, -1, false);
     }
     else if (output_flag)
     {
@@ -538,25 +666,37 @@ int main(int argc, char *argv[])
         {
             client_socket = startUDPC(output_struct.address, output_struct.port);
         }
+        else if (output_struct.type == "UDSCD")
+        {
+            client_socket = startUDSCD(output_struct.path);
+        } else if (output_struct.type == "UDSCS")
+        {
+            client_socket = startUDSCS(output_struct.path);
+        }
+
         executeProgram(program, args, input_struct.type, -1, client_socket, false);
     }
     else if (both_flag)
     {
         input_struct = extract_input_info(both);
+        int socket = -1;
         if (input_struct.type == "TCPS")
         {
-            int client_socket = startTCPS(input_struct.port);
-            executeProgram(program, args, input_struct.type, client_socket, client_socket, true);
-            recv_TCPS(client_socket);
+            socket = startTCPS(input_struct.port);
         }
         else if (input_struct.type == "UDPS")
         {
-            int sockfd = startUDPS(input_struct.port, timeout);
-            executeProgram(program, args, input_struct.type, sockfd, sockfd, true);
-            // recv_UDPS(sockfd, timeout);
+            socket = startUDPS(input_struct.port, timeout);
         }
+        else if (input_struct.type == "UDSSD")
+        {
+            socket = startUDSSD(input_struct.path);
+        } else if (input_struct.type == "UDSSS")
+        {
+            socket = startUDSSS(input_struct.path);
+        }
+        executeProgram(program, args, input_struct.type, socket, socket, true);
     }
-
 
     return 0;
 }
