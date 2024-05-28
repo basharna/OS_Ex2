@@ -142,10 +142,25 @@ int startUDPS(int port, int timeOut)
         cerr << "setsockopt failed" << endl;
         exit(EXIT_FAILURE);
     }
+    // set timeout
+    if (timeOut != -1)
+    {
+        struct timeval tv;
+        tv.tv_sec = timeOut;
+        tv.tv_usec = 0;
+        if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv) < 0)
+        {
+            cerr << "setsockopt failed" << endl;
+            exit(EXIT_FAILURE);
+        }
+    }
 
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(port);
+    // disable blocking io
+    // int flags = fcntl(sockfd, F_GETFL, 0);
+    // fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
 
     if (bind(sockfd, (struct sockaddr *)&address, sizeof(address)) < 0)
     {
@@ -403,6 +418,34 @@ void executeProgram(string &program, string &args, string type, int infd, int ou
     else
     {
         childpid = pid;
+        // while (type == "UDPS")
+        // {
+        //     setUpAlarm(5);
+        //     if (infd != -1)
+        //     {
+        //         char buffer[1024];
+        //         fd_set readfds;
+        //         FD_ZERO(&readfds);
+        //         FD_SET(infd, &readfds);
+        //         int n = select(infd + 1, &readfds, NULL, NULL, NULL);
+        //         if (n < 0)
+        //         {
+        //             break;
+        //         }
+        //         else
+        //         {
+        //             if (FD_ISSET(infd, &readfds))
+        //             {
+        //                 int n = recv(infd, buffer, sizeof(buffer), 0);
+        //                 if (n < 0)
+        //                 {
+        //                     break;
+        //                 }
+        //                 alarm(5);
+        //             }
+        //         }
+        //     }
+        // }
         int status;
         waitpid(pid, &status, 0);
         exit(0);
@@ -614,7 +657,7 @@ int main(int argc, char *argv[])
         {
             client_socket = startUDSCD(output_struct.path);
             server_socket = startUDSSD(input_struct.path);
-        } 
+        }
         else if (input_struct.type == "UDSSD" && output_struct.type == "UDSCS")
         {
             client_socket = startUDSCS(output_struct.path);
@@ -624,7 +667,7 @@ int main(int argc, char *argv[])
         {
             client_socket = startUDSCD(output_struct.path);
             server_socket = startUDSSS(input_struct.path);
-        } 
+        }
         else if (input_struct.type == "UDSSS" && output_struct.type == "UDSCS")
         {
             client_socket = startUDSCS(output_struct.path);
@@ -648,7 +691,8 @@ int main(int argc, char *argv[])
         else if (input_struct.type == "UDSSD")
         {
             server_socket = startUDSSD(input_struct.path);
-        } else if (input_struct.type == "UDSSS")
+        }
+        else if (input_struct.type == "UDSSS")
         {
             server_socket = startUDSSS(input_struct.path);
         }
@@ -669,7 +713,8 @@ int main(int argc, char *argv[])
         else if (output_struct.type == "UDSCD")
         {
             client_socket = startUDSCD(output_struct.path);
-        } else if (output_struct.type == "UDSCS")
+        }
+        else if (output_struct.type == "UDSCS")
         {
             client_socket = startUDSCS(output_struct.path);
         }
@@ -691,7 +736,8 @@ int main(int argc, char *argv[])
         else if (input_struct.type == "UDSSD")
         {
             socket = startUDSSD(input_struct.path);
-        } else if (input_struct.type == "UDSSS")
+        }
+        else if (input_struct.type == "UDSSS")
         {
             socket = startUDSSS(input_struct.path);
         }

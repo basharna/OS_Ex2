@@ -205,7 +205,7 @@ int main(int argc, char *argv[])
             }
         }
     }
-    // No winner
+    // No winner=
     cout << "It's a draw" << endl;
 
     return 0;
