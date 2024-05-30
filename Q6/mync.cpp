@@ -110,20 +110,6 @@ int startTCPC(string address, int port)
     return sockfd;
 }
 
-void handle_alarm(int s)
-{
-    if (childpid != -1)
-    {
-        kill(childpid, SIGKILL);
-        exit(1);
-    }
-}
-
-void setUpAlarm(int seconds)
-{
-    signal(SIGALRM, handle_alarm);
-}
-
 int startUDPS(int port, int timeOut)
 {
     int sockfd;
@@ -191,6 +177,12 @@ int startUDPC(string address, int port)
     if (inet_pton(AF_INET, address.c_str(), &serv_addr.sin_addr) <= 0)
     {
         cerr << "inet_pton failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+    {
+        cerr << "connect failed" << endl;
         exit(EXIT_FAILURE);
     }
 

@@ -1,0 +1,625 @@
+        -:    0:Source:mync.cpp
+        -:    0:Graph:mync.gcno
+        -:    0:Data:mync.gcda
+        -:    0:Runs:39
+        -:    1:#include <iostream>
+        -:    2:#include <string>
+        -:    3:#include <vector>
+        -:    4:#include <unistd.h>
+        -:    5:#include <sys/wait.h>
+        -:    6:#include <sys/socket.h>
+        -:    7:#include <netinet/in.h>
+        -:    8:#include <arpa/inet.h>
+        -:    9:#include <set>
+        -:   10:#include <signal.h>
+        -:   11:#include <regex>
+        -:   12:#include <fcntl.h>
+        -:   13:
+        -:   14:#define max_clients 10
+        -:   15:using namespace std;
+        -:   16:
+        -:   17:pid_t childpid = -1;
+        -:   18:
+        9:   19:struct OutputInfo
+        -:   20:{
+        -:   21:    string type;
+        -:   22:    string address;
+        -:   23:    int port;
+        -:   24:};
+        -:   25:
+       15:   26:struct InputInfo
+        -:   27:{
+        -:   28:    string type;
+        -:   29:    int port;
+        -:   30:};
+        -:   31:
+        -:   32:
+        4:   33:int startTCPS(int port)
+        -:   34:{
+        -:   35:    int sockfd, client_socket;
+        -:   36:    struct sockaddr_in address;
+        4:   37:    int addrlen = sizeof(address);
+        -:   38:
+        4:   39:    if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == 0)
+        -:   40:    {
+        -:   41:        cerr << "socket failed" << endl;
+    #####:   42:        exit(EXIT_FAILURE);
+        -:   43:    }
+        -:   44:
+        4:   45:    int opt = 1;
+        4:   46:    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)) < 0)
+        -:   47:    {
+        -:   48:        cerr << "setsockopt failed" << endl;
+    #####:   49:        exit(EXIT_FAILURE);
+        -:   50:    }
+        -:   51:
+        4:   52:    address.sin_family = AF_INET;
+        4:   53:    address.sin_addr.s_addr = INADDR_ANY;
+        4:   54:    address.sin_port = htons(port);
+        -:   55:
+        4:   56:    if (bind(sockfd, (struct sockaddr *)&address, sizeof(address)) < 0)
+        -:   57:    {
+        -:   58:        cerr << "bind failed" << endl;
+    #####:   59:        exit(EXIT_FAILURE);
+        -:   60:    }
+        -:   61:
+        4:   62:    if (listen(sockfd, 3) < 0)
+        -:   63:    {
+        -:   64:        cerr << "listen failed" << endl;
+    #####:   65:        exit(EXIT_FAILURE);
+        -:   66:    }
+        4:   67:    cout << "Listening on port " << port << endl;
+        -:   68:
+        4:   69:    if ((client_socket = accept(sockfd, (struct sockaddr *)&address, (socklen_t *)&addrlen)) < 0)
+        -:   70:    {
+        -:   71:        cerr << "accept failed" << endl;
+    #####:   72:        exit(EXIT_FAILURE);
+        -:   73:    }
+        -:   74:
+        4:   75:    return client_socket;
+        -:   76:}
+        -:   77:
+    #####:   78:void handleFork(string &program, string &args, int infd, int outfd, bool both)
+        -:   79:{
+        -:   80:    vector<char *> execArgs;
+    #####:   81:    execArgs.push_back(&program[0]);
+    #####:   82:    execArgs.push_back(&args[0]);
+    #####:   83:    execArgs.push_back(nullptr);
+        -:   84:
+    #####:   85:    if (infd != -1)
+        -:   86:    {
+    #####:   87:        dup2(infd, STDIN_FILENO);
+    #####:   88:        if (both)
+        -:   89:        {
+    #####:   90:            dup2(infd, STDOUT_FILENO);
+        -:   91:        }
+        -:   92:    }
+        -:   93:    // redirect stdout of child process to outfd
+    #####:   94:    if (outfd != -1)
+        -:   95:    {
+    #####:   96:        dup2(outfd, STDOUT_FILENO);
+        -:   97:    }
+        -:   98:
+        -:   99:    // Execute the program
+    #####:  100:    execvp(execArgs[0], execArgs.data());
+        -:  101:
+    #####:  102:    close(infd);
+    #####:  103:    close(outfd);
+        -:  104:
+        -:  105:    std::cerr << "Error executing " << program << std::endl;
+    #####:  106:    exit(EXIT_FAILURE);
+        -:  107:}
+        -:  108:
+        1:  109:int startTCPMUXS(int port, string &program, string &args, int outputSock, bool both)
+        -:  110:{
+        -:  111:    int server_socket, client_socket;
+        -:  112:    struct sockaddr_in server_addr, client_addr;
+        -:  113:    fd_set read_fds, master_fds;
+        -:  114:    socklen_t addr_len;
+        -:  115:
+        -:  116:    // Create a TCP socket
+        1:  117:    if ((server_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+        -:  118:    {
+    #####:  119:        perror("socket");
+    #####:  120:        exit(EXIT_FAILURE);
+        -:  121:    }
+        -:  122:
+        -:  123:    // Allow reuse of address and port
+        1:  124:    int opt = 1;
+        1:  125:    if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)) < 0)
+        -:  126:    {
+    #####:  127:        perror("setsockopt");
+    #####:  128:        close(server_socket);
+    #####:  129:        exit(EXIT_FAILURE);
+        -:  130:    }
+        -:  131:
+        -:  132:    // Initialize server address structure
+        1:  133:    server_addr.sin_family = AF_INET;
+        1:  134:    server_addr.sin_addr.s_addr = INADDR_ANY;
+        1:  135:    server_addr.sin_port = htons(port);
+        -:  136:
+        -:  137:    // Bind the socket to the address and port
+        1:  138:    if (bind(server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+        -:  139:    {
+        1:  140:        perror("bind");
+        1:  141:        close(server_socket);
+        1:  142:        exit(EXIT_FAILURE);
+        -:  143:    }
+        -:  144:
+        -:  145:    // Listen for incoming connections
+    #####:  146:    if (listen(server_socket, max_clients) < 0)
+        -:  147:    {
+    #####:  148:        perror("listen");
+    #####:  149:        close(server_socket);
+    #####:  150:        exit(EXIT_FAILURE);
+        -:  151:    }
+        -:  152:
+        -:  153:    // Initialize the master file descriptor set
+    #####:  154:    FD_ZERO(&master_fds);
+    #####:  155:    FD_SET(server_socket, &master_fds);
+        -:  156:
+    #####:  157:    std::cout << "Server listening on port " << port << std::endl;
+        -:  158:
+        -:  159:    while (true)
+        -:  160:    {
+    #####:  161:        read_fds = master_fds;
+        -:  162:
+        -:  163:        // Wait for an activity on one of the sockets
+    #####:  164:        if (select(FD_SETSIZE, &read_fds, nullptr, nullptr, nullptr) < 0)
+        -:  165:        {
+    #####:  166:            perror("select");
+    #####:  167:            close(server_socket);
+    #####:  168:            exit(EXIT_FAILURE);
+        -:  169:        }
+        -:  170:
+        -:  171:        // Check if there is a new connection request
+    #####:  172:        for (int i = 0; i < FD_SETSIZE; ++i)
+        -:  173:        {
+    #####:  174:            if (FD_ISSET(i, &read_fds))
+        -:  175:            {
+    #####:  176:                if (i == server_socket)
+        -:  177:                {
+        -:  178:                    // Accept a new connection
+    #####:  179:                    addr_len = sizeof(client_addr);
+    #####:  180:                    if ((client_socket = accept(server_socket, (struct sockaddr *)&client_addr, &addr_len)) < 0)
+        -:  181:                    {
+    #####:  182:                        perror("accept");
+    #####:  183:                        continue;
+        -:  184:                    }
+        -:  185:
+        -:  186:                    cout << "New connection from "
+    #####:  187:                         << inet_ntoa(client_addr.sin_addr) << ":"
+    #####:  188:                         << ntohs(client_addr.sin_port) << std::endl;
+        -:  189:
+        -:  190:                    // Fork a new process to handle the client
+    #####:  191:                    pid_t pid = fork();
+    #####:  192:                    if (pid < 0)
+        -:  193:                    {
+    #####:  194:                        perror("fork");
+    #####:  195:                        close(client_socket);
+        -:  196:                    }
+    #####:  197:                    else if (pid == 0)
+        -:  198:                    {
+        -:  199:                        // Child process
+    #####:  200:                        close(server_socket);
+    #####:  201:                        if (outputSock == -2)
+        -:  202:                        {
+        -:  203:                            outputSock = client_socket;
+        -:  204:                        }
+    #####:  205:                        handleFork(program, args, client_socket, outputSock, both);
+        -:  206:                        exit(0);
+        -:  207:                    }
+        -:  208:                    else
+        -:  209:                    {
+    #####:  210:                        close(client_socket);
+    #####:  211:                        while (waitpid(-1, nullptr, WNOHANG) > 0)
+        -:  212:                            ;
+        -:  213:                    }
+        -:  214:                }
+        -:  215:            }
+        -:  216:        }
+        -:  217:    }
+        -:  218:
+        -:  219:    // Close the server socket
+        -:  220:    close(server_socket);
+        -:  221:}
+        -:  222:
+        6:  223:int startTCPC(string address, int port)
+        -:  224:{
+        -:  225:    int sockfd;
+        -:  226:    struct sockaddr_in serv_addr;
+        -:  227:
+        6:  228:    if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+        -:  229:    {
+        -:  230:        cerr << "socket failed" << endl;
+    #####:  231:        exit(EXIT_FAILURE);
+        -:  232:    }
+        -:  233:
+        6:  234:    serv_addr.sin_family = AF_INET;
+        6:  235:    serv_addr.sin_port = htons(port);
+        -:  236:
+        6:  237:    if (address == "localhost")
+        -:  238:    {
+        -:  239:        address = "127.0.0.1";
+        -:  240:    }
+        -:  241:
+        6:  242:    if (inet_pton(AF_INET, address.c_str(), &serv_addr.sin_addr) <= 0)
+        -:  243:    {
+        -:  244:        cerr << "inet_pton failed" << endl;
+    #####:  245:        exit(EXIT_FAILURE);
+        -:  246:    }
+        -:  247:
+        6:  248:    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+        -:  249:    {
+        -:  250:        cerr << "connect failed" << endl;
+        3:  251:        exit(EXIT_FAILURE);
+        -:  252:    }
+        -:  253:
+        3:  254:    return sockfd;
+        -:  255:}
+        -:  256:
+        8:  257:int startUDPS(int port, int timeOut)
+        -:  258:{
+        -:  259:    int sockfd;
+        -:  260:    struct sockaddr_in address;
+        -:  261:
+        8:  262:    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) == 0)
+        -:  263:    {
+        -:  264:        cerr << "socket failed" << endl;
+    #####:  265:        exit(EXIT_FAILURE);
+        -:  266:    }
+        -:  267:
+        -:  268:    // set socket to reuse address and port
+        8:  269:    int opt = 1;
+        8:  270:    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)) < 0)
+        -:  271:    {
+        -:  272:        cerr << "setsockopt failed" << endl;
+    #####:  273:        exit(EXIT_FAILURE);
+        -:  274:    }
+        -:  275:
+        -:  276:    // set timeout
+        8:  277:    if (timeOut != -1)
+        -:  278:    {
+        -:  279:        struct timeval tv;
+    #####:  280:        tv.tv_sec = timeOut;
+    #####:  281:        tv.tv_usec = 0;
+    #####:  282:        if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv) < 0)
+        -:  283:        {
+        -:  284:            cerr << "setsockopt failed" << endl;
+    #####:  285:            exit(EXIT_FAILURE);
+        -:  286:        }
+        -:  287:    }
+        -:  288:
+        8:  289:    address.sin_family = AF_INET;
+        8:  290:    address.sin_addr.s_addr = INADDR_ANY;
+        8:  291:    address.sin_port = htons(port);
+        -:  292:
+        8:  293:    if (bind(sockfd, (struct sockaddr *)&address, sizeof(address)) < 0)
+        -:  294:    {
+        -:  295:        cerr << "bind failed" << endl;
+        1:  296:        exit(EXIT_FAILURE);
+        -:  297:    }
+        -:  298:
+        7:  299:    return sockfd;
+        -:  300:}
+        -:  301:
+        3:  302:int startUDPC(string address, int port)
+        -:  303:{
+        -:  304:    int sockfd;
+        -:  305:    struct sockaddr_in serv_addr;
+        -:  306:
+        3:  307:    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+        -:  308:    {
+        -:  309:        cerr << "socket failed" << endl;
+    #####:  310:        exit(EXIT_FAILURE);
+        -:  311:    }
+        -:  312:
+        3:  313:    serv_addr.sin_family = AF_INET;
+        3:  314:    serv_addr.sin_port = htons(port);
+        -:  315:
+        3:  316:    if (address == "localhost")
+        -:  317:    {
+        -:  318:        address = "127.0.0.1";
+        -:  319:    }
+        -:  320:
+        3:  321:    if (inet_pton(AF_INET, address.c_str(), &serv_addr.sin_addr) <= 0)
+        -:  322:    {
+        -:  323:        cerr << "inet_pton failed" << endl;
+    #####:  324:        exit(EXIT_FAILURE);
+        -:  325:    }
+        -:  326:
+        3:  327:    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+        -:  328:    {
+        -:  329:        cerr << "connect failed" << endl;
+    #####:  330:        exit(EXIT_FAILURE);
+        -:  331:    }
+        -:  332:
+        3:  333:    return sockfd;
+        -:  334:}
+        -:  335:
+       13:  336:void executeProgram(string &program, string &args, string type, int infd, int outfd, bool both)
+        -:  337:{
+        -:  338:    vector<char *> execArgs;
+       13:  339:    execArgs.push_back(&program[0]);
+       13:  340:    execArgs.push_back(&args[0]);
+       13:  341:    execArgs.push_back(nullptr);
+        -:  342:
+       13:  343:    pid_t pid = fork();
+       13:  344:    if (pid < 0)
+        -:  345:    {
+        -:  346:        std::cerr << "Fork failed" << std::endl;
+    #####:  347:        exit(EXIT_FAILURE);
+        -:  348:    }
+       13:  349:    else if (pid == 0)
+        -:  350:    {
+        -:  351:        // redirect stdin of child process to infd
+        1:  352:        if (infd != -1)
+        -:  353:        {
+        1:  354:            dup2(infd, STDIN_FILENO);
+        1:  355:            if (both)
+        -:  356:            {
+    #####:  357:                dup2(infd, STDOUT_FILENO);
+        -:  358:            }
+        -:  359:        }
+        -:  360:        // redirect stdout of child process to outfd
+        1:  361:        if (outfd != -1)
+        -:  362:        {
+    #####:  363:            dup2(outfd, STDOUT_FILENO);
+        -:  364:        }
+        -:  365:
+        -:  366:        // Execute the program
+        1:  367:        execvp(execArgs[0], execArgs.data());
+        -:  368:
+        1:  369:        close(infd);
+        1:  370:        close(outfd);
+        -:  371:
+        -:  372:        std::cerr << "Error executing " << program << std::endl;
+        1:  373:        exit(EXIT_FAILURE);
+        -:  374:    }
+        -:  375:    else
+        -:  376:    {
+       12:  377:        childpid = pid;
+        -:  378:        int status;
+       12:  379:        waitpid(pid, &status, 0);
+       12:  380:        exit(0);
+        -:  381:    }
+        -:  382:}
+        -:  383:
+       21:  384:bool validate_input(string &input)
+        -:  385:{
+       21:  386:    regex tcp_udp_regex("^(TCPS|TCPMUXS|UDPS)\\d+$");
+       21:  387:    return regex_match(input, tcp_udp_regex);
+       21:  388:}
+        -:  389:
+       11:  390:bool validate_output(string &output)
+        -:  391:{
+       11:  392:    regex tcp_udp_regex("^(TCPC|UDPC)[^,]+,\\d+$");
+       11:  393:    return regex_match(output, tcp_udp_regex);
+       11:  394:}
+        -:  395:
+        9:  396:OutputInfo extract_output_info(const std::string &output)
+        -:  397:{
+        -:  398:    OutputInfo info;
+        -:  399:
+        9:  400:    regex pattern("^(TCPC|UDPC)([^,]+),([0-9]+)$");
+        -:  401:
+        -:  402:    smatch match;
+        9:  403:    if (regex_match(output, match, pattern))
+        -:  404:    {
+       18:  405:        info.type = match[1].str();
+        -:  406:
+       27:  407:        info.address = match[2].str();
+        -:  408:
+       18:  409:        info.port = stoi(match[3].str());
+        -:  410:    }
+        -:  411:
+        9:  412:    return info;
+        9:  413:}
+        -:  414:
+       15:  415:InputInfo extract_input_info(const std::string &input)
+        -:  416:{
+        -:  417:    InputInfo info;
+        -:  418:
+       15:  419:    regex pattern("^(TCPS|TCPMUXS|UDPS)([0-9]+)$");
+        -:  420:
+        -:  421:    smatch match;
+       15:  422:    if (regex_match(input, match, pattern))
+        -:  423:    {
+       45:  424:        info.type = match[1].str();
+       30:  425:        info.port = stoi(match[2].str());
+        -:  426:    }
+        -:  427:
+       15:  428:    return info;
+       15:  429:}
+        -:  430:
+       28:  431:void proccessArgs(int argc, char *argv[], int &opt, int &timeout, string &input, string &output, string &both, bool &input_flag, bool &output_flag, bool &both_flag)
+        -:  432:{
+      109:  433:    while ((opt = getopt(argc, argv, "i:o:b:t:e")) != -1)
+        -:  434:    {
+       62:  435:        switch (opt)
+        -:  436:        {
+       18:  437:        case 'i':
+       18:  438:            input = optarg;
+       18:  439:            input_flag = true;
+       18:  440:            if (!validate_input(input))
+        -:  441:            {
+        -:  442:                cerr << "invalid -i argument" << endl;
+        4:  443:                exit(1);
+        -:  444:            }
+        -:  445:            break;
+        -:  446:
+       11:  447:        case 'o':
+       11:  448:            output = optarg;
+       11:  449:            output_flag = true;
+       11:  450:            if (!validate_output(output))
+        -:  451:            {
+        -:  452:                cerr << "invalid -o argument" << endl;
+        2:  453:                exit(1);
+        -:  454:            }
+        -:  455:            break;
+        -:  456:
+        3:  457:        case 'b':
+        3:  458:            both = optarg;
+        3:  459:            both_flag = true;
+        3:  460:            if (!validate_input(both))
+        -:  461:            {
+        -:  462:                cerr << "invalid -b argument" << endl;
+        1:  463:                exit(1);
+        -:  464:            }
+        -:  465:            break;
+        -:  466:
+        1:  467:        case 't':
+        2:  468:            timeout = stoi(optarg);
+        1:  469:            if (timeout < 0)
+        -:  470:            {
+        -:  471:                cerr << "timeout must be a positive integer" << endl;
+        1:  472:                exit(1);
+        -:  473:            }
+        -:  474:            break;
+        -:  475:
+        -:  476:        case 'e':
+        -:  477:            break;
+        -:  478:
+        -:  479:        default:
+        1:  480:            cerr << "Usage: " << argv[0] << "[-i TCPS<port>|UDPS<port>] [-o TCPC<adress,port>|UDPC<adress,port>] [-b TCPS<port>|UDPS<port>] [-t <timeout>]";
+        1:  481:            exit(1);
+        -:  482:            break;
+        -:  483:        }
+        -:  484:    }
+        -:  485:
+       19:  486:    if ((input_flag || output_flag) && both_flag)
+        -:  487:    {
+        -:  488:        cerr << "-b cannot be used with -i or -o" << endl;
+    #####:  489:        exit(1);
+        -:  490:    }
+       19:  491:}
+        -:  492:
+       39:  493:int main(int argc, char *argv[])
+        -:  494:{
+      125:  495:    if (argc < 3 || std::string(argv[1]) != "-e")
+        -:  496:    {
+        -:  497:        std::cerr << "Usage: mync -e <program> [args...]" << std::endl;
+       11:  498:        return 1;
+        -:  499:    }
+        -:  500:
+       28:  501:    string temp = argv[2];
+       28:  502:    string program = "./" + temp;
+       28:  503:    string args = argv[3];
+        -:  504:
+        -:  505:    int opt;
+       28:  506:    int timeout = -1;
+        -:  507:    string input;
+        -:  508:    string output;
+        -:  509:    string both;
+       28:  510:    bool input_flag = false;
+       28:  511:    bool output_flag = false;
+       28:  512:    bool both_flag = false;
+        -:  513:    OutputInfo output_struct;
+        -:  514:    InputInfo input_struct;
+       28:  515:    proccessArgs(argc, argv, opt, timeout, input, output, both, input_flag, output_flag, both_flag);
+        -:  516:
+       19:  517:    if (input_flag && output_flag)
+        -:  518:    {
+        6:  519:        input_struct = extract_input_info(input);
+       12:  520:        output_struct = extract_output_info(output);
+       13:  521:        if ((input_struct.type == "TCPS" || input_struct.type == "TCPMUXS") && output_struct.type == "TCPC")
+        -:  522:        {
+        4:  523:            int client_socket = startTCPC(output_struct.address, output_struct.port);
+        -:  524:            int server_socket;
+        1:  525:            if (input_struct.type == "TCPS")
+        -:  526:            {
+        1:  527:                server_socket = startTCPS(input_struct.port);
+        1:  528:                executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
+        -:  529:            }
+    #####:  530:            else if (input_struct.type == "TCPMUXS")
+        -:  531:            {
+    #####:  532:                startTCPMUXS(input_struct.port, program, args, client_socket, false);
+        -:  533:            }
+        -:  534:        }
+        5:  535:        else if (input_struct.type == "UDPS" && output_struct.type == "UDPC")
+        -:  536:        {
+        1:  537:            int client_socket = startUDPC(output_struct.address, output_struct.port);
+        1:  538:            int server_socket = startUDPS(input_struct.port, timeout);
+        1:  539:            executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
+        -:  540:        }
+        3:  541:        else if (input_struct.type == "UDPS" && output_struct.type == "TCPC")
+        -:  542:        {
+        1:  543:            int client_socket = startTCPC(output_struct.address, output_struct.port);
+        1:  544:            int server_socket = startUDPS(input_struct.port, timeout);
+        1:  545:            executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
+        -:  546:        }
+       2*:  547:        else if ((input_struct.type == "TCPS" || input_struct.type == "TCPMUXS") && output_struct.type == "UDPC")
+        -:  548:        {
+        2:  549:            int client_socket = startUDPC(output_struct.address, output_struct.port);
+        -:  550:            int server_socket;
+        -:  551:
+        1:  552:            if (input_struct.type == "TCPS")
+        -:  553:            {
+        1:  554:                server_socket = startTCPS(input_struct.port);
+        1:  555:                executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
+        -:  556:            }
+    #####:  557:            else if (input_struct.type == "TCPMUXS")
+        -:  558:            {
+    #####:  559:                startTCPMUXS(input_struct.port, program, args, client_socket, false);
+        -:  560:            }
+        -:  561:        }
+        -:  562:    }
+       13:  563:    else if (input_flag)
+        -:  564:    {
+       14:  565:        input_struct = extract_input_info(input);
+        -:  566:
+        -:  567:        int server_socket;
+        7:  568:        if (input_struct.type == "TCPS")
+        -:  569:        {
+        1:  570:            server_socket = startTCPS(input_struct.port);
+        1:  571:            executeProgram(program, args, input_struct.type, server_socket, -1, false);
+        -:  572:        }
+        6:  573:        else if (input_struct.type == "TCPMUXS")
+        -:  574:        {
+        1:  575:            startTCPMUXS(input_struct.port, program, args, -1, false);
+        -:  576:        }
+        5:  577:        else if (input_struct.type == "UDPS")
+        -:  578:        {
+        5:  579:            server_socket = startUDPS(input_struct.port, timeout);
+        4:  580:            executeProgram(program, args, input_struct.type, server_socket, -1, false);
+        -:  581:        }
+        -:  582:    }
+        6:  583:    else if (output_flag)
+        -:  584:    {
+        6:  585:        output_struct = extract_output_info(output);
+        -:  586:        int client_socket = -1;
+        3:  587:        if (output_struct.type == "TCPC")
+        -:  588:        {
+        3:  589:            client_socket = startTCPC(output_struct.address, output_struct.port);
+        -:  590:        }
+        1:  591:        else if (output_struct.type == "UDPC")
+        -:  592:        {
+        2:  593:            client_socket = startUDPC(output_struct.address, output_struct.port);
+        -:  594:        }
+        2:  595:        executeProgram(program, args, input_struct.type, -1, client_socket, false);
+        -:  596:    }
+        3:  597:    else if (both_flag)
+        -:  598:    {
+        4:  599:        input_struct = extract_input_info(both);
+        3:  600:        if (input_struct.type == "TCPS" || input_struct.type == "TCPMUXS")
+        -:  601:        {
+        -:  602:            int client_socket;
+        1:  603:            if (input_struct.type == "TCPS")
+        -:  604:            {
+        1:  605:                client_socket = startTCPS(input_struct.port);
+        1:  606:                executeProgram(program, args, input_struct.type, client_socket, client_socket, true);
+        -:  607:            }
+    #####:  608:            else if (input_struct.type == "TCPMUXS")
+        -:  609:            {
+    #####:  610:                startTCPMUXS(input_struct.port, program, args, -2, true);
+        -:  611:            }
+        -:  612:        }
+        1:  613:        else if (input_struct.type == "UDPS")
+        -:  614:        {
+        1:  615:            int sockfd = startUDPS(input_struct.port, timeout);
+        1:  616:            executeProgram(program, args, input_struct.type, sockfd, sockfd, true);
+        -:  617:        }
+        -:  618:    }
+        -:  619:
+        -:  620:    return 0;
+        1:  621:}
