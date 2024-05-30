@@ -142,6 +142,7 @@ int startUDPS(int port, int timeOut)
         cerr << "setsockopt failed" << endl;
         exit(EXIT_FAILURE);
     }
+    
     // set timeout
     if (timeOut != -1)
     {
@@ -158,9 +159,6 @@ int startUDPS(int port, int timeOut)
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(port);
-    // disable blocking io
-    // int flags = fcntl(sockfd, F_GETFL, 0);
-    // fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
 
     if (bind(sockfd, (struct sockaddr *)&address, sizeof(address)) < 0)
     {
@@ -171,27 +169,6 @@ int startUDPS(int port, int timeOut)
     return sockfd;
 }
 
-void recv_UDPS(int sockfd, int timeOut)
-{
-    char buffer[1024];
-    if (timeOut != -1)
-    {
-        setUpAlarm(timeOut);
-    }
-    while (true)
-    {
-        int n = recv(sockfd, buffer, sizeof(buffer), 0);
-        if (n < 0)
-        {
-            break;
-        }
-        if (timeOut != -1)
-        {
-            alarm(timeOut);
-        }
-    }
-}
-
 int startUDPC(string address, int port)
 {
     int sockfd;
@@ -200,22 +177,6 @@ int startUDPC(string address, int port)
     if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
     {
         cerr << "socket failed" << endl;
-        exit(EXIT_FAILURE);
-    }
-
-    // set socket to reuse address and port
-    int opt = 1;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)) < 0)
-    {
-        cerr << "setsockopt failed" << endl;
-        exit(EXIT_FAILURE);
-    }
-
-    FILE *socket_stream = fdopen(sockfd, "r+");
-    if (!socket_stream)
-    {
-        perror("fdopen failed");
-        close(sockfd);
         exit(EXIT_FAILURE);
     }
 
@@ -418,34 +379,6 @@ void executeProgram(string &program, string &args, string type, int infd, int ou
     else
     {
         childpid = pid;
-        // while (type == "UDPS")
-        // {
-        //     setUpAlarm(5);
-        //     if (infd != -1)
-        //     {
-        //         char buffer[1024];
-        //         fd_set readfds;
-        //         FD_ZERO(&readfds);
-        //         FD_SET(infd, &readfds);
-        //         int n = select(infd + 1, &readfds, NULL, NULL, NULL);
-        //         if (n < 0)
-        //         {
-        //             break;
-        //         }
-        //         else
-        //         {
-        //             if (FD_ISSET(infd, &readfds))
-        //             {
-        //                 int n = recv(infd, buffer, sizeof(buffer), 0);
-        //                 if (n < 0)
-        //                 {
-        //                     break;
-        //                 }
-        //                 alarm(5);
-        //             }
-        //         }
-        //     }
-        // }
         int status;
         waitpid(pid, &status, 0);
         exit(0);
@@ -585,6 +518,11 @@ void proccessArgs(int argc, char *argv[], int &opt, int &timeout, string &input,
 
         case 't':
             timeout = stoi(optarg);
+            if (timeout < 0)
+            {
+                cerr << "timeout must be a positive integer" << endl;
+                exit(1);
+            }
             break;
 
         case 'e':
@@ -592,6 +530,7 @@ void proccessArgs(int argc, char *argv[], int &opt, int &timeout, string &input,
 
         default:
             cerr << "Usage: " << argv[0] << "[-i TCPS<port>|UDPS<port>] [-o TCPC<adress,port>|UDPC<adress,port>] [-b TCPS<port>|UDPS<port>] [-t <timeout>]";
+            exit(1);
             break;
         }
     }

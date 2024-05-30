@@ -43,8 +43,7 @@ int main(int argc, char *argv[])
     while (true)
     {
         char buffer[1024] = {0};
-        int valread;
-        valread = recv(sockfd, buffer, 1024, 0);
+        recv(sockfd, buffer, 1024, 0);
         cout << buffer;
     }
 

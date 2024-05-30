@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -std=c++11 -Wall -O3
+CXXFLAGS = -std=c++11 -Wall -O3 -fprofile-arcs -ftest-coverage
 
 all: mync ttt UDSD
 
@@ -22,4 +22,4 @@ UDS_UDP.o: UDS_UDP.cpp
 	$(CXX) $(CXXFLAGS) -c UDS_UDP.cpp
 
 clean:
-	rm -f *.o mync ttt UDSD
+	rm -f *.o mync ttt UDSD *.gcno *.gcda *.gcov
