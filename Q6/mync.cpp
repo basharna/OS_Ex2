@@ -592,7 +592,7 @@ int main(int argc, char *argv[])
         else if (input_struct.type == "UDSSD" && output_struct.type == "UDSCS")
         {
             client_socket = startUDSCS(output_struct.path);
-            server_socket = startUDSSS(input_struct.path);
+            server_socket = startUDSSD(input_struct.path);
         }
         else if (input_struct.type == "UDSSS" && output_struct.type == "UDSCD")
         {

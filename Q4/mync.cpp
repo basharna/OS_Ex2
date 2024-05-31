@@ -28,41 +28,6 @@ struct InputInfo
     int port;
 };
 
-void recv_TCPS(int sockfd)
-{
-    while (true)
-    {
-        char buf[10];
-        int bytesReceived = recv(sockfd, buf, sizeof(buf), 0);
-        if (bytesReceived <= 0)
-        {
-            close(sockfd); // Close client socket
-            // kill child process
-            if (kill(childpid, SIGKILL) == -1)
-            {
-                // Error handling
-                std::cerr << "Failed to kill child process" << std::endl;
-                exit(1);
-            }
-            cout << "Client disconnected" << endl;
-            exit(1);
-        }
-        else if (string(buf) == "exit\n")
-        {
-            close(sockfd); // Close client socket
-            // kill child process
-            if (kill(childpid, SIGKILL) == -1)
-            {
-                // Error handling
-                std::cerr << "Failed to kill child process" << std::endl;
-                exit(1);
-            }
-            cout << "Client disconnected" << endl;
-            exit(1);
-        }
-    }
-}
-
 int startTCPS(int port)
 {
     int sockfd, client_socket;
@@ -142,20 +107,6 @@ int startTCPC(string address, int port)
     return sockfd;
 }
 
-void handle_alarm(int s)
-{
-    if (childpid != -1)
-    {
-        kill(childpid, SIGKILL);
-        exit(1);
-    }
-}
-
-void setUpAlarm(int seconds)
-{
-    signal(SIGALRM, handle_alarm);
-}
-
 int startUDPS(int port, int timeOut)
 {
     int sockfd;
@@ -175,6 +126,18 @@ int startUDPS(int port, int timeOut)
         exit(EXIT_FAILURE);
     }
 
+    if (timeOut != -1)
+    {
+        struct timeval tv;
+        tv.tv_sec = timeOut;
+        tv.tv_usec = 0;
+        if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv) < 0)
+        {
+            cerr << "setsockopt failed" << endl;
+            exit(EXIT_FAILURE);
+        }
+    }
+
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(port);
@@ -186,27 +149,6 @@ int startUDPS(int port, int timeOut)
     }
 
     return sockfd;
-}
-
-void recv_UDPS(int sockfd, int timeOut)
-{
-    char buffer[1024];
-    if (timeOut != -1)
-    {
-        setUpAlarm(timeOut);
-    }
-    while (true)
-    {
-        int n = recv(sockfd, buffer, sizeof(buffer), 0);
-        if (n < 0)
-        {
-            break;
-        }
-        if (timeOut != -1)
-        {
-            alarm(timeOut);
-        }
-    }
 }
 
 int startUDPC(string address, int port)
@@ -247,6 +189,12 @@ int startUDPC(string address, int port)
     if (inet_pton(AF_INET, address.c_str(), &serv_addr.sin_addr) <= 0)
     {
         cerr << "inet_pton failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+    {
+        cerr << "connect failed" << endl;
         exit(EXIT_FAILURE);
     }
 
@@ -295,6 +243,9 @@ void executeProgram(string &program, string &args, string type, int infd, int ou
     else
     {
         childpid = pid;
+        int status;
+        waitpid(pid, &status, 0);
+        exit(0);
     }
 }
 
@@ -383,7 +334,21 @@ void proccessArgs(int argc, char *argv[], int &opt, int &timeout, string &input,
             break;
 
         case 't':
+            for (int i = 0; i < strlen(optarg); i++)
+            {
+                if (!isdigit(optarg[i]))
+                {
+                    cerr << "timeout must be a positive integer" << endl;
+                    exit(1);
+                }
+            }
+
             timeout = stoi(optarg);
+            if (timeout < 0)
+            {
+                cerr << "timeout must be a positive integer" << endl;
+                exit(1);
+            }
             break;
 
         case 'e':
@@ -391,6 +356,7 @@ void proccessArgs(int argc, char *argv[], int &opt, int &timeout, string &input,
 
         default:
             cerr << "Usage: " << argv[0] << "[-i TCPS<port>|UDPS<port>] [-o TCPC<adress,port>|UDPC<adress,port>] [-b TCPS<port>|UDPS<port>] [-t <timeout>]";
+            exit(1);
             break;
         }
     }
@@ -430,51 +396,43 @@ int main(int argc, char *argv[])
     {
         input_struct = extract_input_info(input);
         output_struct = extract_output_info(output);
+        int client_socket = -1;
+        int server_socket = -1;
         if (input_struct.type == "TCPS" && output_struct.type == "TCPC")
         {
-            int client_socket = startTCPC(output_struct.address, output_struct.port);
-            int server_socket = startTCPS(input_struct.port);
-            executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
-            recv_TCPS(server_socket);
+            client_socket = startTCPC(output_struct.address, output_struct.port);
+            server_socket = startTCPS(input_struct.port);
         }
         else if (input_struct.type == "UDPS" && output_struct.type == "UDPC")
         {
-            int client_socket = startUDPC(output_struct.address, output_struct.port);
-            int server_socket = startUDPS(input_struct.port, timeout);
-            executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
-            // recv_UDPS(server_socket, timeout);
+            client_socket = startUDPC(output_struct.address, output_struct.port);
+            server_socket = startUDPS(input_struct.port, timeout);
         }
         else if (input_struct.type == "UDPS" && output_struct.type == "TCPC")
         {
-            int client_socket = startTCPC(output_struct.address, output_struct.port);
-            int server_socket = startUDPS(input_struct.port, timeout);
-            executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
-            // recv_UDPS(server_socket, timeout);
+            client_socket = startTCPC(output_struct.address, output_struct.port);
+            server_socket = startUDPS(input_struct.port, timeout);
         }
         else if (input_struct.type == "TCPS" && output_struct.type == "UDPC")
         {
-            int client_socket = startUDPC(output_struct.address, output_struct.port);
-            int server_socket = startTCPS(input_struct.port);
-            executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
-            recv_TCPS(server_socket);
+            client_socket = startUDPC(output_struct.address, output_struct.port);
+            server_socket = startTCPS(input_struct.port);
         }
+        executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
     }
     else if (input_flag)
     {
         input_struct = extract_input_info(input);
-        int server_socket;
+        int server_socket = -1;
         if (input_struct.type == "TCPS")
         {
             server_socket = startTCPS(input_struct.port);
-            executeProgram(program, args, input_struct.type, server_socket, -1, false);
-            recv_TCPS(server_socket);
         }
         else if (input_struct.type == "UDPS")
         {
             server_socket = startUDPS(input_struct.port, timeout);
-            executeProgram(program, args, input_struct.type, server_socket, -1, false);
-            // recv_UDPS(server_socket, timeout);
         }
+        executeProgram(program, args, input_struct.type, server_socket, -1, false);
     }
     else if (output_flag)
     {
@@ -493,18 +451,16 @@ int main(int argc, char *argv[])
     else if (both_flag)
     {
         input_struct = extract_input_info(both);
+        int client_socket = -1;
         if (input_struct.type == "TCPS")
         {
-            int client_socket = startTCPS(input_struct.port);
-            executeProgram(program, args, input_struct.type, client_socket, client_socket, true);
-            recv_TCPS(client_socket);
+            client_socket = startTCPS(input_struct.port);
         }
         else if (input_struct.type == "UDPS")
         {
-            int sockfd = startUDPS(input_struct.port, timeout);
-            executeProgram(program, args, input_struct.type, sockfd, sockfd, true);
-            // recv_UDPS(sockfd, timeout);
+            client_socket = startUDPS(input_struct.port, timeout);
         }
+        executeProgram(program, args, input_struct.type, client_socket, client_socket, true);
     }
 
     return 0;

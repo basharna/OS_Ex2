@@ -175,6 +175,11 @@ int main(int argc, char *argv[])
             int cell;
             while (!(cin >> cell) || cell < 1 || cell > 9 || board[(cell - 1) / 3][(cell - 1) % 3] != 0)
             {
+                if (cin.fail())
+                {
+                    exit(1);
+                }
+
                 cout << "Invalid cell number. Enter a valid cell number: " << endl;
                 cin.clear();
                 cin.ignore(numeric_limits<streamsize>::max(), '\n');

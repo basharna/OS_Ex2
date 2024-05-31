@@ -29,7 +29,6 @@ struct InputInfo
     int port;
 };
 
-
 int startTCPS(int port)
 {
     int sockfd, client_socket;
@@ -465,6 +464,16 @@ void proccessArgs(int argc, char *argv[], int &opt, int &timeout, string &input,
             break;
 
         case 't':
+            // check if optrarg is a number and not letters
+            for (int i = 0; i < strlen(optarg); i++)
+            {
+                if (!isdigit(optarg[i]))
+                {
+                    cerr << "timeout must be a positive integer" << endl;
+                    exit(1);
+                }
+            }
+
             timeout = stoi(optarg);
             if (timeout < 0)
             {
@@ -597,18 +606,15 @@ int main(int argc, char *argv[])
     else if (both_flag)
     {
         input_struct = extract_input_info(both);
-        if (input_struct.type == "TCPS" || input_struct.type == "TCPMUXS")
+        int client_socket;
+        if (input_struct.type == "TCPS")
         {
-            int client_socket;
-            if (input_struct.type == "TCPS")
-            {
-                client_socket = startTCPS(input_struct.port);
-                executeProgram(program, args, input_struct.type, client_socket, client_socket, true);
-            }
-            else if (input_struct.type == "TCPMUXS")
-            {
-                startTCPMUXS(input_struct.port, program, args, -2, true);
-            }
+            client_socket = startTCPS(input_struct.port);
+            executeProgram(program, args, input_struct.type, client_socket, client_socket, true);
+        }
+        else if (input_struct.type == "TCPMUXS")
+        {
+            startTCPMUXS(input_struct.port, program, args, -2, true);
         }
         else if (input_struct.type == "UDPS")
         {
