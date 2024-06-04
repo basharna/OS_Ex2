@@ -177,6 +177,7 @@ int main(int argc, char *argv[])
             {
                 if (cin.fail())
                 {
+                    cerr << "cin failed" << endl;
                     exit(1);
                 }
 

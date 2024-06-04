@@ -10,6 +10,7 @@
 #include <signal.h>
 #include <regex>
 #include <fcntl.h>
+#include <sys/select.h>
 
 using namespace std;
 
@@ -109,9 +110,9 @@ int startTCPC(string address, int port)
 
 int startUDPS(int port, int timeOut)
 {
-    int sockfd;
-    struct sockaddr_in address;
+    struct sockaddr_in client_address;
 
+    int sockfd;
     if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) == 0)
     {
         cerr << "socket failed" << endl;
@@ -128,6 +129,7 @@ int startUDPS(int port, int timeOut)
 
     if (timeOut != -1)
     {
+        cout << "Setting timeout to " << timeOut << " seconds" << endl;
         struct timeval tv;
         tv.tv_sec = timeOut;
         tv.tv_usec = 0;
@@ -136,13 +138,14 @@ int startUDPS(int port, int timeOut)
             cerr << "setsockopt failed" << endl;
             exit(EXIT_FAILURE);
         }
+        cout << "Timeout set" << endl;
     }
 
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(port);
+    client_address.sin_family = AF_INET;
+    client_address.sin_addr.s_addr = INADDR_ANY;
+    client_address.sin_port = htons(port);
 
-    if (bind(sockfd, (struct sockaddr *)&address, sizeof(address)) < 0)
+    if (bind(sockfd, (struct sockaddr *)&client_address, sizeof(client_address)) < 0)
     {
         cerr << "bind failed" << endl;
         exit(EXIT_FAILURE);
@@ -170,14 +173,6 @@ int startUDPC(string address, int port)
         exit(EXIT_FAILURE);
     }
 
-    FILE *socket_stream = fdopen(sockfd, "r+");
-    if (!socket_stream)
-    {
-        perror("fdopen failed");
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    }
-
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(port);
 
@@ -201,8 +196,92 @@ int startUDPC(string address, int port)
     return sockfd;
 }
 
-void executeProgram(string &program, string &args, string type, int infd, int outfd, bool both)
+void handle_udp_server(int udp_socket, int socket_pair[2], int port)
 {
+    struct sockaddr_in client_address;
+    socklen_t client_len = sizeof(client_address);
+
+    client_address.sin_family = AF_INET;
+    client_address.sin_addr.s_addr = INADDR_ANY;
+    client_address.sin_port = htons(port);
+
+    fd_set readfds;
+    char buffer[1024];
+    bool is_connected = false;
+
+    // recive initial msg
+    int n = recvfrom(udp_socket, buffer, sizeof(buffer), 0, (struct sockaddr *)&client_address, &client_len);
+    if (write(socket_pair[0], buffer, n) < 0)
+    {
+        cerr << "write failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    while (true)
+    {
+        FD_ZERO(&readfds);
+        FD_SET(udp_socket, &readfds);
+        FD_SET(socket_pair[0], &readfds);
+
+        int max_fd = max(udp_socket, socket_pair[0]) + 1;
+
+        if (select(max_fd, &readfds, NULL, NULL, NULL) < 0)
+        {
+            cerr << "select failed" << endl;
+            exit(EXIT_FAILURE);
+        }
+
+        if (FD_ISSET(udp_socket, &readfds))
+        {
+            int n = recvfrom(udp_socket, buffer, sizeof(buffer), 0, (struct sockaddr *)&client_address, &client_len);
+            cout << "Received " << n << " bytes" << endl;
+            if (n < 0)
+            {
+                cerr << "recv failed" << endl;
+                exit(EXIT_FAILURE);
+            }
+            else if (write(socket_pair[0], buffer, n) < 0)
+            {
+                cerr << "write failed" << endl;
+                exit(EXIT_FAILURE);
+            }
+        }
+
+        if (FD_ISSET(socket_pair[0], &readfds))
+        {
+            int n = read(socket_pair[0], buffer, sizeof(buffer));
+            if (n < 0)
+            {
+                cerr << "read failed" << endl;
+                exit(EXIT_FAILURE);
+            }
+            if (n == 0)
+            {
+                break;
+            }
+            if (sendto(udp_socket, buffer, n, 0, (struct sockaddr *)&client_address, client_len) < 0)
+            {
+                cerr << "errno:" << errno << endl;
+                cerr << "send failed" << endl;
+                exit(EXIT_FAILURE);
+            }
+        }
+    }
+    close(udp_socket);
+    close(socket_pair[0]);
+    close(socket_pair[1]);
+}
+
+void executeProgram(string &program, string &args, string type, int infd, int outfd, bool both, int port = 0)
+{
+    // create socket pair
+    int socket_pair[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, socket_pair) < 0)
+    {
+        cerr << "socketpair failed" << endl;
+        exit(EXIT_FAILURE);
+    }
+
     vector<char *> execArgs;
     execArgs.push_back(&program[0]);
     execArgs.push_back(&args[0]);
@@ -216,20 +295,32 @@ void executeProgram(string &program, string &args, string type, int infd, int ou
     }
     else if (pid == 0)
     {
-        // redirect stdin of child process to infd
+        // // redirect stdin of child process to infd
+        // if (infd != -1)
+        // {
+        //     dup2(infd, STDIN_FILENO);
+        //     if (both)
+        //     {
+        //         dup2(infd, STDOUT_FILENO);
+        //     }
+        // }
+        // // redirect stdout of child process to outfd
+        // if (outfd != -1)
+        // {
+        //     dup2(outfd, STDOUT_FILENO);
+        // }
+
+        // redirect stdin of child process to socket pair
+        close(socket_pair[0]);
         if (infd != -1)
         {
-            dup2(infd, STDIN_FILENO);
+            dup2(socket_pair[1], STDIN_FILENO);
             if (both)
             {
-                dup2(infd, STDOUT_FILENO);
+                dup2(socket_pair[1], STDOUT_FILENO);
             }
         }
-        // redirect stdout of child process to outfd
-        if (outfd != -1)
-        {
-            dup2(outfd, STDOUT_FILENO);
-        }
+        close(socket_pair[1]);
 
         // Execute the program
         execvp(execArgs[0], execArgs.data());
@@ -237,12 +328,14 @@ void executeProgram(string &program, string &args, string type, int infd, int ou
         close(infd);
         close(outfd);
 
-        std::cerr << "Error executing " << program << std::endl;
+        cerr << "Error executing " << program << endl;
         exit(EXIT_FAILURE);
     }
     else
     {
+        close(socket_pair[1]);
         childpid = pid;
+        handle_udp_server(infd, socket_pair, port);
         int status;
         waitpid(pid, &status, 0);
         exit(0);
@@ -334,7 +427,7 @@ void proccessArgs(int argc, char *argv[], int &opt, int &timeout, string &input,
             break;
 
         case 't':
-            for (int i = 0; i < strlen(optarg); i++)
+            for (size_t i = 0; i < strlen(optarg); i++)
             {
                 if (!isdigit(optarg[i]))
                 {
@@ -432,7 +525,7 @@ int main(int argc, char *argv[])
         {
             server_socket = startUDPS(input_struct.port, timeout);
         }
-        executeProgram(program, args, input_struct.type, server_socket, -1, false);
+        executeProgram(program, args, input_struct.type, server_socket, -1, false, input_struct.port);
     }
     else if (output_flag)
     {
@@ -460,7 +553,7 @@ int main(int argc, char *argv[])
         {
             client_socket = startUDPS(input_struct.port, timeout);
         }
-        executeProgram(program, args, input_struct.type, client_socket, client_socket, true);
+        executeProgram(program, args, input_struct.type, client_socket, client_socket, true, input_struct.port);
     }
 
     return 0;
