@@ -176,10 +176,17 @@ int main(int argc, char *argv[])
 
             while (!(cin >> cell) || cell < 1 || cell > 9 || board[(cell - 1) / 3][(cell - 1) % 3] != 0 )
             {
-                if (cin.fail())
+                // check if end if file
+                if (cin.eof())
+                {
+                    exit(1);
+                }
+                else if (!isdigit(cell))
                 {
                     cin.clear();
-                    cout << "\n client Disconnected" << endl;
+                }
+                else if (cin.fail())
+                {
                     exit(1);
                 }
                 cout << "Invalid cell number. Enter a valid cell number: " << cell << endl;

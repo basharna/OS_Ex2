@@ -128,7 +128,7 @@ int startUDPS(int port, int timeOut)
         cerr << "setsockopt failed" << endl;
         exit(EXIT_FAILURE);
     }
-    
+
     // set timeout
     if (timeOut != -1)
     {
@@ -509,6 +509,15 @@ void proccessArgs(int argc, char *argv[], int &opt, int &timeout, string &input,
             break;
 
         case 't':
+            for (size_t i = 0; i < strlen(optarg); i++)
+            {
+                if (!isdigit(optarg[i]))
+                {
+                    cerr << "timeout must be a positive integer" << endl;
+                    exit(1);
+                }
+            }
+            
             timeout = stoi(optarg);
             if (timeout < 0)
             {

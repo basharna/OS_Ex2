@@ -465,7 +465,7 @@ void proccessArgs(int argc, char *argv[], int &opt, int &timeout, string &input,
 
         case 't':
             // check if optrarg is a number and not letters
-            for (int i = 0; i < strlen(optarg); i++)
+            for (size_t i = 0; i < strlen(optarg); i++)
             {
                 if (!isdigit(optarg[i]))
                 {

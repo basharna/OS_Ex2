@@ -122,8 +122,6 @@ int main(int argc, char *argv[])
     // Print the initial board
     printBoard(board);
 
-    // 123456789
-
     int ai = 0;
     for (int i = 0; i < 9; i++)
     {

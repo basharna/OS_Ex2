@@ -175,9 +175,17 @@ int main(int argc, char *argv[])
             int cell;
             while (!(cin >> cell) || cell < 1 || cell > 9 || board[(cell - 1) / 3][(cell - 1) % 3] != 0)
             {
-                if (cin.fail())
+                // check if end if file
+                if (cin.eof())
                 {
-                    cerr << "cin failed" << endl;
+                    exit(1);
+                }
+                else if (!isdigit(cell))
+                {
+                    cin.clear();
+                }
+                else if (cin.fail())
+                {
                     exit(1);
                 }
 

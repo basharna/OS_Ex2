@@ -104,7 +104,7 @@ int startTCPS(int port)
         cerr << "accept failed" << endl;
         exit(EXIT_FAILURE);
     }
-
+    
     return client_socket;
 }
 
@@ -184,6 +184,9 @@ void executeProgram(string &program, string &args, string type, int infd, int ou
     else
     {
         childpid = pid;
+        int status;
+        waitpid(pid, &status, 0);
+        exit(0);
     }
 }
 
@@ -307,28 +310,48 @@ int main(int argc, char *argv[])
     InputInfo input_struct;
     proccessArgs(argc, argv, opt, input, output, both, input_flag, output_flag, both_flag);
 
-    if (input_flag || output_flag)
+    if (input_flag && output_flag)
     {
         input_struct = extract_input_info(input);
         output_struct = extract_output_info(output);
+        int client_socket = -1;
+        int server_socket = -1;
         if (input_struct.type == "TCPS" && output_struct.type == "TCPC")
         {
-            int client_socket = startTCPC(output_struct.address, output_struct.port);
-            int server_socket = startTCPS(input_struct.port);
-            executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
-            recv_TCPS(server_socket);
+            client_socket = startTCPC(output_struct.address, output_struct.port);
+            server_socket = startTCPS(input_struct.port);
         }
+        executeProgram(program, args, input_struct.type, server_socket, client_socket, false);
     }
-    
-    if (both_flag)
+    else if (input_flag)
     {
-        input_struct = extract_input_info(both);
+        input_struct = extract_input_info(input);
+        int server_socket = -1;
         if (input_struct.type == "TCPS")
         {
-            int client_socket = startTCPS(input_struct.port);
-            executeProgram(program, args, input_struct.type, client_socket, client_socket, true);
-            recv_TCPS(client_socket);
+            server_socket = startTCPS(input_struct.port);
         }
+        executeProgram(program, args, input_struct.type, server_socket, -1, false);    
+    }
+    else if (output_flag)
+    {
+        output_struct = extract_output_info(output);
+        int client_socket = -1;
+        if (output_struct.type == "TCPC")
+        {
+            client_socket = startTCPC(output_struct.address, output_struct.port);
+        }
+        executeProgram(program, args, input_struct.type, -1, client_socket, false);
+    }
+    else if (both_flag)
+    {
+        input_struct = extract_input_info(both);
+        int client_socket = -1;
+        if (input_struct.type == "TCPS")
+        {
+            client_socket = startTCPS(input_struct.port);
+        }
+        executeProgram(program, args, input_struct.type, client_socket, client_socket, true);
     }
     
     return 0;

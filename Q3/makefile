@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -std=c++11 -Wall -O3
+CXXFLAGS = -std=c++11 -Wall -O3 -fprofile-arcs -ftest-coverage
 
 all: mync ttt
 
@@ -16,4 +16,4 @@ mync.o: mync.cpp
 	$(CXX) $(CXXFLAGS) -c mync.cpp
 
 clean:
-	rm -f *.o mync ttt
+	rm -f *.o mync ttt *.gcno *.gcda *.gcov
